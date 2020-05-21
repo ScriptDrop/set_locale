@@ -3,7 +3,13 @@ defmodule SetLocale do
 
   defmodule Config do
     @enforce_keys [:gettext, :default_locale]
-    defstruct [:gettext, :default_locale, :cookie_key, additional_locales: []]
+    defstruct [
+      :gettext,
+      :default_locale,
+      :cookie_key,
+      redirect: true,
+      additional_locales: []
+    ]
   end
 
   def init(opts) when is_tuple(hd(opts)), do: struct!(Config, opts)
@@ -35,10 +41,7 @@ defmodule SetLocale do
         config
       ) do
     if request_path != "/" and supported_locale?(requested_locale, config) do
-      if Enum.member?(config.additional_locales, requested_locale),
-        do: Gettext.put_locale(config.gettext, config.default_locale),
-        else: Gettext.put_locale(config.gettext, requested_locale)
-      assign(conn, :locale, requested_locale)
+      assign_locale(conn, config, requested_locale)
     else
       path = rewrite_path(conn, requested_locale, config)
 
@@ -48,12 +51,28 @@ defmodule SetLocale do
     end
   end
 
+  # We're always hitting this path because our route never has "locale" in its params
   def call(conn, config) do
-    path = rewrite_path(conn, nil, config)
+    redirect = Map.get(config, :redirect, true)
 
-    conn
-    |> redirect_to(path)
-    |> halt
+    if redirect do
+      path = rewrite_path(conn, nil, config)
+
+      conn
+      |> redirect_to(path)
+      |> halt
+    else
+      locale = determine_locale(conn, nil, config)
+      assign_locale(conn, config, locale)
+    end
+  end
+
+  def assign_locale(conn, config, requested_locale) do
+    if Enum.member?(config.additional_locales, requested_locale),
+      do: Gettext.put_locale(config.gettext, config.default_locale),
+      else: Gettext.put_locale(config.gettext, requested_locale)
+
+    assign(conn, :locale, requested_locale)
   end
 
   defp rewrite_path(%{request_path: request_path} = conn, requested_locale, config) do
