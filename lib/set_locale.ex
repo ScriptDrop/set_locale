@@ -3,7 +3,14 @@ defmodule SetLocale do
 
   defmodule Config do
     @enforce_keys [:gettext, :default_locale]
-    defstruct [:gettext, :default_locale, :cookie_key, additional_locales: []]
+    defstruct [
+      :gettext,
+      :default_locale,
+      :cookie_key,
+      underscore_locales: false,
+      redirect: true,
+      additional_locales: []
+    ]
   end
 
   def init(opts) when is_tuple(hd(opts)), do: struct!(Config, opts)
@@ -35,10 +42,7 @@ defmodule SetLocale do
         config
       ) do
     if request_path != "/" and supported_locale?(requested_locale, config) do
-      if Enum.member?(config.additional_locales, requested_locale),
-        do: Gettext.put_locale(config.gettext, config.default_locale),
-        else: Gettext.put_locale(config.gettext, requested_locale)
-      assign(conn, :locale, requested_locale)
+      assign_locale(conn, config, requested_locale)
     else
       path = rewrite_path(conn, requested_locale, config)
 
@@ -48,12 +52,28 @@ defmodule SetLocale do
     end
   end
 
+  # We're always hitting this path because our route never has "locale" in its params
   def call(conn, config) do
-    path = rewrite_path(conn, nil, config)
+    redirect = Map.get(config, :redirect, true)
 
-    conn
-    |> redirect_to(path)
-    |> halt
+    if redirect do
+      path = rewrite_path(conn, nil, config)
+
+      conn
+      |> redirect_to(path)
+      |> halt
+    else
+      locale = determine_locale(conn, nil, config)
+      assign_locale(conn, config, locale)
+    end
+  end
+
+  def assign_locale(conn, config, requested_locale) do
+    if Enum.member?(config.additional_locales, requested_locale),
+      do: Gettext.put_locale(config.gettext, config.default_locale),
+      else: Gettext.put_locale(config.gettext, requested_locale)
+
+    assign(conn, :locale, requested_locale)
   end
 
   defp rewrite_path(%{request_path: request_path} = conn, requested_locale, config) do
@@ -143,10 +163,20 @@ defmodule SetLocale do
 
   defp get_locale_from_cookie(conn, config), do: conn.cookies[config.cookie_key]
 
-  defp get_locale_from_header(conn, gettext) do
+  defp get_locale_from_header(conn, config) do
     conn
     |> SetLocale.Headers.extract_accept_language()
-    |> Enum.find(nil, fn accepted_locale -> supported_locale?(accepted_locale, gettext) end)
+    |> process_accept_language_values(config)
+    |> Enum.find(nil, fn accepted_locale -> supported_locale?(accepted_locale, config) end)
+  end
+
+  defp process_accept_language_values(locales, %SetLocale.Config{} = config) do
+    # change locale separators to use underscores per ISO 15897 if so configured
+    if Map.get(config, :underscore_locales) do
+      Enum.map(locales, fn locale -> String.replace(locale, "-", "_") end)
+    else
+      locales
+    end
   end
 
   defp supported_locale?(locale, config), do: Enum.member?(supported_locales(config), locale)
