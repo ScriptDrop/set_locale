@@ -7,6 +7,7 @@ defmodule SetLocale do
       :gettext,
       :default_locale,
       :cookie_key,
+      underscore_locales: false,
       redirect: true,
       additional_locales: []
     ]
@@ -162,10 +163,20 @@ defmodule SetLocale do
 
   defp get_locale_from_cookie(conn, config), do: conn.cookies[config.cookie_key]
 
-  defp get_locale_from_header(conn, gettext) do
+  defp get_locale_from_header(conn, config) do
     conn
     |> SetLocale.Headers.extract_accept_language()
-    |> Enum.find(nil, fn accepted_locale -> supported_locale?(accepted_locale, gettext) end)
+    |> process_accept_language_values(config)
+    |> Enum.find(nil, fn accepted_locale -> supported_locale?(accepted_locale, config) end)
+  end
+
+  defp process_accept_language_values(locales, %SetLocale.Config{} = config) do
+    # change locale separators to use underscores per ISO 15897 if so configured
+    if Map.get(config, :underscore_locales) do
+      Enum.map(locales, fn locale -> String.replace(locale, "-", "_") end)
+    else
+      locales
+    end
   end
 
   defp supported_locale?(locale, config), do: Enum.member?(supported_locales(config), locale)
